@@ -52,4 +52,11 @@ public interface TestCaseRepository extends JpaRepository<TestCase, Long> {
     List<TestCase> findByProblemIdAndTypeAndIsActiveTrueOrderBySortOrder(Long problemId, TestCase.Type type);
 
 
+    // Add this method to your TestCaseRepository
+    List<TestCase> findByProblemOrderBySortOrderAsc(Problem problem);
+
+    // Alternative if you prefer by ID:
+    List<TestCase> findByProblemIdOrderBySortOrderAsc(Long problemId);
+
+
 }

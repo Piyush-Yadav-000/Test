@@ -1,8 +1,8 @@
 package com.piyush.mockarena.dto;
 
 import lombok.Data;
-
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 public class SubmissionResponse {
@@ -23,6 +23,11 @@ public class SubmissionResponse {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
-    // ✅ NEW FIELD - This was missing!
+    // ✅ NEW FIELDS for LeetCode-style functionality
     private String message;
+    private Boolean submissionSaved = false;
+    private Integer passedTestCases = 0;
+    private Integer totalTestCases = 0;
+    private List<TestCaseResult> testResults; // ✅ This will now work correctly
+    private Boolean failedHiddenTestCase = false;
 }

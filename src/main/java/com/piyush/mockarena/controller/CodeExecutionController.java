@@ -8,7 +8,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import lombok.extern.slf4j.Slf4j;
-
 import jakarta.validation.Valid;
 
 import java.util.concurrent.CompletableFuture;
@@ -32,71 +31,131 @@ public class CodeExecutionController {
             Authentication authentication) {
 
         String username = authentication.getName();
-        log.info("🔧 Running code for user: {} on problem: {}", username, request.getProblemId());
+        log.info("🔥 Code RUN request: Problem {} by {}", request.getProblemId(), username);
 
-        // Mark as run (not submission)
-        request.setIsSubmission(false);
-
-        return codeExecutionService.executeCode(request, username)
-                .thenApply(response -> ResponseEntity.ok(response))
+        return codeExecutionService.executeCode(request, username, false)
+                .thenApply(response -> {
+                    log.info("✅ Run completed for problem {} - Status: {}",
+                            request.getProblemId(), response.getStatus());
+                    return ResponseEntity.ok(response);
+                })
                 .exceptionally(throwable -> {
-                    log.error("❌ Code run failed: {}", throwable.getMessage());
-                    return ResponseEntity.badRequest()
-                            .body(CodeExecutionResponse.builder()
+                    log.error("❌ Run failed for problem {}: {}",
+                            request.getProblemId(), throwable.getMessage());
+                    return ResponseEntity.status(500).body(
+                            CodeExecutionResponse.builder()
                                     .success(false)
-                                    .status("ERROR")
-                                    .message(throwable.getMessage())
-                                    .build());
+                                    .status("INTERNAL_ERROR")
+                                    .message("Code execution failed: " + throwable.getMessage())
+                                    .build()
+                    );
                 });
     }
 
     /**
-     * 🎯 SUBMIT: Full submission with all test cases (LeetCode "Submit Solution")
+     * 🎯 SUBMIT CODE: Full submission with all test cases (LeetCode "Submit")
      */
     @PostMapping("/submit")
     @PreAuthorize("hasRole('USER')")
-    public CompletableFuture<ResponseEntity<CodeExecutionResponse>> submitSolution(
-            @Valid @RequestBody CodeRunRequest request,
+    public CompletableFuture<ResponseEntity<CodeExecutionResponse>> submitCode(
+            @Valid @RequestBody CodeSubmitRequest request,
             Authentication authentication) {
 
         String username = authentication.getName();
-        log.info("🎯 Submitting solution for user: {} on problem: {}", username, request.getProblemId());
+        log.info("🎯 Code SUBMIT request: Problem {} by {}", request.getProblemId(), username);
 
-        // Mark as submission
-        request.setIsSubmission(true);
+        // Convert to CodeRunRequest for unified processing
+        CodeRunRequest runRequest = new CodeRunRequest();
+        runRequest.setProblemId(request.getProblemId());
+        runRequest.setLanguageId(request.getLanguageId());
+        runRequest.setSourceCode(request.getCode());
+        runRequest.setIsSubmission(true);
 
-        return codeExecutionService.executeCode(request, username)
-                .thenApply(response -> ResponseEntity.ok(response))
+        return codeExecutionService.executeCode(runRequest, username, true)
+                .thenApply(response -> {
+                    log.info("✅ Submission completed for problem {} - Status: {}",
+                            request.getProblemId(), response.getStatus());
+                    return ResponseEntity.ok(response);
+                })
                 .exceptionally(throwable -> {
-                    log.error("❌ Solution submission failed: {}", throwable.getMessage());
-                    return ResponseEntity.badRequest()
-                            .body(CodeExecutionResponse.builder()
+                    log.error("❌ Submission failed for problem {}: {}",
+                            request.getProblemId(), throwable.getMessage());
+                    return ResponseEntity.status(500).body(
+                            CodeExecutionResponse.builder()
                                     .success(false)
-                                    .status("ERROR")
-                                    .message(throwable.getMessage())
-                                    .build());
+                                    .status("INTERNAL_ERROR")
+                                    .message("Submission failed: " + throwable.getMessage())
+                                    .build()
+                    );
                 });
     }
 
     /**
-     * 📊 GET SUBMISSION STATUS: Check submission result
+     * 🔧 RUN WITH TEMPLATE: LeetCode-style function-only submission
      */
-    @GetMapping("/submission/{submissionId}")
+    @PostMapping("/run-template")
     @PreAuthorize("hasRole('USER')")
-    public ResponseEntity<CodeExecutionResponse> getSubmissionStatus(
-            @PathVariable Long submissionId,
+    public CompletableFuture<ResponseEntity<CodeExecutionResponse>> runWithTemplate(
+            @Valid @RequestBody CodeRunWithTemplateRequest request,
             Authentication authentication) {
 
-        try {
-            CodeExecutionResponse result = codeExecutionService.getSubmissionDetails(submissionId);
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                    .body(CodeExecutionResponse.builder()
-                            .success(false)
-                            .status("ERROR")
-                            .message(e.getMessage())
-                            .build());
-        }
+        String username = authentication.getName();
+        log.info("🔧 Template RUN request: Problem {} by {}", request.getProblemId(), username);
+
+        return codeExecutionService.executeWithTemplate(request, username, false)
+                .thenApply(response -> {
+                    log.info("✅ Template run completed for problem {} - Status: {}",
+                            request.getProblemId(), response.getStatus());
+                    return ResponseEntity.ok(response);
+                })
+                .exceptionally(throwable -> {
+                    log.error("❌ Template run failed for problem {}: {}",
+                            request.getProblemId(), throwable.getMessage());
+                    return ResponseEntity.status(500).body(
+                            CodeExecutionResponse.builder()
+                                    .success(false)
+                                    .status("INTERNAL_ERROR")
+                                    .message("Template execution failed: " + throwable.getMessage())
+                                    .build()
+                    );
+                });
+    }
+
+    /**
+     * 📝 SUBMIT WITH TEMPLATE: LeetCode-style function-only submission
+     */
+    @PostMapping("/submit-template")
+    @PreAuthorize("hasRole('USER')")
+    public CompletableFuture<ResponseEntity<CodeExecutionResponse>> submitWithTemplate(
+            @Valid @RequestBody SubmissionWithTemplateRequest request,
+            Authentication authentication) {
+
+        String username = authentication.getName();
+        log.info("📝 Template SUBMIT request: Problem {} by {}", request.getProblemId(), username);
+
+        // Convert to unified request format
+        CodeRunWithTemplateRequest runRequest = CodeRunWithTemplateRequest.builder()
+                .problemId(request.getProblemId())
+                .languageId(request.getLanguageId())
+                .userCode(request.getUserCode())
+                .build();
+
+        return codeExecutionService.executeWithTemplate(runRequest, username, true)
+                .thenApply(response -> {
+                    log.info("✅ Template submission completed for problem {} - Status: {}",
+                            request.getProblemId(), response.getStatus());
+                    return ResponseEntity.ok(response);
+                })
+                .exceptionally(throwable -> {
+                    log.error("❌ Template submission failed for problem {}: {}",
+                            request.getProblemId(), throwable.getMessage());
+                    return ResponseEntity.status(500).body(
+                            CodeExecutionResponse.builder()
+                                    .success(false)
+                                    .status("INTERNAL_ERROR")
+                                    .message("Template submission failed: " + throwable.getMessage())
+                                    .build()
+                    );
+                });
     }
 }

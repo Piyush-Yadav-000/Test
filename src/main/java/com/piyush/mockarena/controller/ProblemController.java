@@ -316,15 +316,58 @@ public class ProblemController {
     @PostMapping("/generate-all-templates")
     @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Generate templates for all problems (Admin only)")
-    public ResponseEntity<Map<String, String>> generateAllTemplates() {
+    public ResponseEntity<Map<String, Object>> generateAllTemplates() {
         try {
-            codeTemplateService.generateAllTemplates();
-            return ResponseEntity.ok(Map.of("message", "✅ Successfully generated templates for all problems"));
+            log.info("🚀 Admin requested template generation for all problems");
+
+            // Get statistics
+            List<Problem> problems = problemRepository.findByIsActiveTrueOrderByCreatedAtDesc();
+            List<Language> languages = languageRepository.findByActiveTrueOrderBySortOrder();
+
+            int totalCombinations = problems.size() * languages.size();
+            int successCount = 0;
+            int errorCount = 0;
+
+            // Generate templates for each problem-language combination
+            for (Problem problem : problems) {
+                for (Language language : languages) {
+                    try {
+                        // Generate template for this combination
+                        String template = codeTemplateService.getTemplate(problem.getId(), language.getId());
+                        if (template != null && !template.trim().isEmpty()) {
+                            successCount++;
+                        }
+                    } catch (Exception e) {
+                        errorCount++;
+                        log.warn("Failed to generate template for problem {} in {}: {}",
+                                problem.getTitle(), language.getDisplayName(), e.getMessage());
+                    }
+                }
+            }
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("message", "✅ Template generation completed");
+            response.put("totalProblems", problems.size());
+            response.put("totalLanguages", languages.size());
+            response.put("totalCombinations", totalCombinations);
+            response.put("successCount", successCount);
+            response.put("errorCount", errorCount);
+            response.put("timestamp", java.time.LocalDateTime.now());
+
+            return ResponseEntity.ok(response);
+
         } catch (Exception e) {
-            log.error("❌ Error generating all templates: {}", e.getMessage());
-            return ResponseEntity.status(500).body(Map.of("error", "Failed to generate templates: " + e.getMessage()));
+            log.error("❌ Error in template generation: {}", e.getMessage(), e);
+
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", "Failed to generate templates: " + e.getMessage(),
+                    "timestamp", java.time.LocalDateTime.now()
+            ));
         }
     }
+
 
     // ✅ Get single problem endpoint (MUST be after specific endpoints)
     @GetMapping("/{id}")

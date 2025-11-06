@@ -2,7 +2,13 @@ package com.piyush.mockarena.controller;
 
 import java.util.Map;
 import java.util.HashMap;
+import java.util.concurrent.CompletableFuture;
+import java.time.LocalDateTime;
+import java.util.Optional;
+import java.util.List;
 import com.piyush.mockarena.dto.*;
+import com.piyush.mockarena.entity.*;
+import com.piyush.mockarena.repository.*;
 import com.piyush.mockarena.service.SubmissionService;
 import com.piyush.mockarena.service.CodeTemplateService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -16,24 +22,30 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.web.bind.annotation.*;
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/submissions")
 @RequiredArgsConstructor
 @Slf4j
-@Tag(name = "Code Submissions", description = "Code submission and execution management")
+@Tag(name = "Code Submissions", description = "LeetCode-style code submission and execution management")
 public class SubmissionController {
 
     private final SubmissionService submissionService;
+    private final SubmissionRepository submissionRepository;
+    private final ProblemRepository problemRepository;
+    private final LanguageRepository languageRepository;
+    private final UserRepository userRepository;
 
-    // ✅ NEW - Add CodeTemplateService
     @Autowired
     private CodeTemplateService codeTemplateService;
+
+    // ✅ Keep your existing endpoints exactly as they are...
 
     @Operation(summary = "Submit code", description = "Submit code solution for a problem")
     @PostMapping
@@ -146,9 +158,6 @@ public class SubmissionController {
         return ResponseEntity.ok(stats);
     }
 
-    /**
-     * ✅ SINGLE /run ENDPOINT - Run code directly without creating submission
-     */
     @Operation(summary = "Run code", description = "Run code with custom input (for testing)")
     @PostMapping("/run")
     @PreAuthorize("hasRole('USER')")
@@ -207,8 +216,6 @@ public class SubmissionController {
         }
     }
 
-    // ✅ LEETCODE-STYLE TEMPLATE ENDPOINTS (CLEANED UP, NO DUPLICATES)
-
     @Operation(summary = "Get problem template", description = "Get template code for a specific problem and language")
     @GetMapping("/template/{problemId}/{languageId}")
     @PreAuthorize("hasRole('USER')")
@@ -265,6 +272,58 @@ public class SubmissionController {
         }
     }
 
+    // 🚀 FIXED LEETCODE-STYLE SUBMISSION ENDPOINTS
+
+    /**
+     * 🚀 MAIN LEETCODE-STYLE SUBMISSION ENDPOINT - FIXED
+     * POST /api/submissions/submit-leetcode-style
+     */
+    @Operation(summary = "Submit LeetCode-style solution", description = "Submit solution against all test cases (LeetCode-style)")
+    @PostMapping("/submit-leetcode-style")
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<Map<String, Object>> submitLeetCodeStyle(
+            @RequestBody SubmissionWithTemplateRequest request,
+            Authentication authentication) {
+        try {
+            String username = authentication.getName();
+            log.info("🚀 [LEETCODE-STYLE] Submitting solution for user: {}", username);
+
+            // ✅ FIXED: Call the correct method from SubmissionService
+            SubmissionResponse result = submissionService.submitSolutionLeetCodeStyle(
+                    request.getProblemId(),
+                    request.getLanguageId(),
+                    request.getUserCode(),
+                    username
+            );
+
+            // Return response structure expected by frontend
+            return ResponseEntity.ok(Map.of(
+                    "success", result.getSubmissionSaved() != null ? result.getSubmissionSaved() : false,
+                    "submission", result,
+                    "message", result.getMessage(),
+                    "status", result.getStatus(),
+                    "passedTestCases", result.getPassedTestCases() != null ? result.getPassedTestCases() : 0,
+                    "totalTestCases", result.getTotalTestCases() != null ? result.getTotalTestCases() : 0,
+                    "submissionSaved", result.getSubmissionSaved() != null ? result.getSubmissionSaved() : false
+            ));
+
+        } catch (Exception e) {
+            log.error("❌ [LEETCODE-STYLE] Error submitting solution", e);
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "message", "Failed to submit solution: " + e.getMessage(),
+                    "status", "ERROR",
+                    "passedTestCases", 0,
+                    "totalTestCases", 0,
+                    "submissionSaved", false
+            ));
+        }
+    }
+
+    /**
+     * ✅ FIXED: Submit code with template (for backward compatibility)
+     * POST /api/submissions/submit-template
+     */
     @Operation(summary = "Submit code with template", description = "Submit solution against all test cases")
     @PostMapping("/submit-template")
     @PreAuthorize("hasRole('USER')")
@@ -275,7 +334,8 @@ public class SubmissionController {
             String username = authentication.getName();
             log.info("Submitting code with template for user: {}", username);
 
-            SubmissionResponse result = submissionService.submitCodeWithTemplate(
+            // ✅ FIXED: Use the correct method name that exists in SubmissionService
+            SubmissionResponse result = submissionService.submitSolutionLeetCodeStyle(
                     request.getProblemId(),
                     request.getLanguageId(),
                     request.getUserCode(),
@@ -283,7 +343,7 @@ public class SubmissionController {
             );
 
             return ResponseEntity.ok(Map.of(
-                    "success", true,
+                    "success", result.getSubmissionSaved() != null ? result.getSubmissionSaved() : false,
                     "submission", result,
                     "message", "Solution submitted successfully!"
             ));
@@ -292,8 +352,68 @@ public class SubmissionController {
             log.error("Error submitting code with template", e);
             return ResponseEntity.status(500).body(Map.of(
                     "success", false,
-                    "message", "Failed to submit solution: " + e.getMessage()
+                    "message", "Failed to submit solution: " + e.getMessage(),
+                    "submission", null
             ));
+        }
+    }
+
+    /**
+     * 📊 Get submission status and results (for polling) - FIXED
+     * GET /api/submissions/{id}/status
+     */
+    @Operation(summary = "Get submission status", description = "Get real-time submission status for polling")
+    @GetMapping("/{id}/status")
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<Map<String, Object>> getSubmissionStatus(@PathVariable Long id, Authentication authentication) {
+        try {
+            String username = authentication.getName();
+
+            // ✅ FIXED: Handle the service response properly
+            SubmissionResponse result = submissionService.getSubmissionById(id, username);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("submission", result);
+            response.put("status", result.getStatus());
+            response.put("submissionSaved", result.getSubmissionSaved());
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            log.error("❌ Error getting submission status: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to get submission status"));
+        }
+    }
+
+    /**
+     * 🎯 Get detailed submission results (for final display) - FIXED
+     * GET /api/submissions/{id}/results
+     */
+    @Operation(summary = "Get submission results", description = "Get comprehensive submission results")
+    @GetMapping("/{id}/results")
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<Map<String, Object>> getSubmissionResults(@PathVariable Long id, Authentication authentication) {
+        try {
+            String username = authentication.getName();
+
+            // ✅ FIXED: Handle the service response properly
+            SubmissionResponse result = submissionService.getSubmissionById(id, username);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("submission", result);
+            response.put("results", result.getTestResults());
+            response.put("failedHiddenTestCase", result.getFailedHiddenTestCase());
+            response.put("submissionSaved", result.getSubmissionSaved());
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            log.error("❌ Error getting submission results: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to get submission results"));
         }
     }
 }

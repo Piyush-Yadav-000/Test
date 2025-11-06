@@ -1,6 +1,6 @@
 package com.piyush.mockarena.service;
 
-import lombok.RequiredArgsConstructor;
+import lombok.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -150,24 +150,9 @@ public class Judge0Service {
                 .doOnError(error -> log.error("❌ Failed to get languages from Judge0: {}", error.getMessage()));
     }
 
-    // ✅ DTOs remain the same
-    @lombok.Data
-    @lombok.Builder
-    @lombok.NoArgsConstructor
-    @lombok.AllArgsConstructor
-    public static class Judge0SubmissionRequest {
-        private String source_code;
-        private Integer language_id;
-        private String stdin;
-        private String expected_output;
-    }
 
-    @lombok.Data
-    @lombok.NoArgsConstructor
-    @lombok.AllArgsConstructor
-    public static class Judge0SubmissionResponse {
-        private String token;
-    }
+
+
 
     @lombok.Data
     @lombok.NoArgsConstructor
@@ -186,16 +171,47 @@ public class Judge0Service {
     @lombok.Data
     @lombok.NoArgsConstructor
     @lombok.AllArgsConstructor
+    public static class Judge0Language {
+        private Integer id;
+        private String name;
+    }
+
+
+    // Add these DTOs to Judge0Service.java
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Judge0SubmissionRequest {
+        private String source_code;
+        private Integer language_id;
+        private String stdin;
+        private String expected_output;
+        private Float cpu_time_limit;
+        private Integer memory_limit;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Judge0SubmissionResponse {
+        private String stdout;
+        private String stderr;
+        private String compile_output;
+        private String message;
+        private Float time;
+        private Integer memory;
+        private Judge0Status status;
+        private String token;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class Judge0Status {
         private Integer id;
         private String description;
     }
 
-    @lombok.Data
-    @lombok.NoArgsConstructor
-    @lombok.AllArgsConstructor
-    public static class Judge0Language {
-        private Integer id;
-        private String name;
-    }
 }

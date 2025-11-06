@@ -62,4 +62,7 @@ public interface ProblemRepository extends JpaRepository<Problem, Long> {
             Pageable pageable);
 
     long countByIsActiveTrue();
+
+    // Add to your existing ProblemRepository.jav
+
 }

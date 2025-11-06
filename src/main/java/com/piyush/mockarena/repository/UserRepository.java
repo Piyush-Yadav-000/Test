@@ -3,6 +3,7 @@ package com.piyush.mockarena.repository;
 import com.piyush.mockarena.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -21,4 +22,13 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     boolean existsByUsername(String username);
     boolean existsByEmail(String email);
+
+    // Add to your existing UserRepository.java
+
+    /**
+     * Count users with more problems solved (for ranking)
+     */
+    @Query("SELECT COUNT(DISTINCT u) FROM User u WHERE (SELECT COUNT(DISTINCT s.problem.id) FROM Submission s WHERE s.user = u AND s.status = 'ACCEPTED') > :problemsSolved")
+    Long countUsersWithMoreProblemsSolved(@Param("problemsSolved") Integer problemsSolved);
+
 }

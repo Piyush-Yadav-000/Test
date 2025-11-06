@@ -39,379 +39,536 @@ public class CodeExecutionService {
     private Judge0Service judge0Service;
 
     /**
-     * 🚀 EXECUTE CODE: Universal method for both run and submit
+     * 🚀 UNIVERSAL CODE EXECUTION - Handles both Run and Submit (FIXED FOR ALL PROBLEMS)
      */
-    @Async
-    public CompletableFuture<CodeExecutionResponse> executeCode(CodeRunRequest request, String username) {
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                log.info("🏃 Executing code for user: {} on problem: {} (submission: {})",
-                        username, request.getProblemId(), request.getIsSubmission());
+    @Async("submissionExecutor")
+    public CompletableFuture<CodeExecutionResponse> executeCode(
+            CodeRunRequest request, String username, boolean isSubmission) {
 
-                // Get problem and validate
-                Problem problem = problemRepository.findById(request.getProblemId())
-                        .orElseThrow(() -> new RuntimeException("Problem not found: " + request.getProblemId()));
+        try {
+            log.info("🔥 Starting code execution - Problem: {}, User: {}, Submission: {}",
+                    request.getProblemId(), username, isSubmission);
 
-                User user = userRepository.findByUsername(username)
-                        .orElseThrow(() -> new RuntimeException("User not found: " + username));
+            // 1. Validate inputs
+            Problem problem = problemRepository.findById(request.getProblemId())
+                    .orElseThrow(() -> new RuntimeException("Problem not found"));
 
-                Language language = languageRepository.findById(request.getLanguageId())
-                        .orElseThrow(() -> new RuntimeException("Language not found: " + request.getLanguageId()));
+            Language language = languageRepository.findById(request.getLanguageId())
+                    .orElseThrow(() -> new RuntimeException("Language not found"));
 
-                // Get appropriate test cases using YOUR EXISTING METHODS
-                List<TestCase> testCases = getTestCases(problem, request.getIsSubmission());
+            User user = userRepository.findByUsername(username)
+                    .orElseThrow(() -> new RuntimeException("User not found"));
 
-                if (testCases.isEmpty()) {
-                    throw new RuntimeException("No test cases found for this problem");
-                }
+            // 2. Get test cases based on execution type
+            List<TestCase> testCases = getTestCases(problem, isSubmission);
+            log.info("📋 Retrieved {} test cases for execution", testCases.size());
 
-                // Generate executable code
-                String executableCode = codeTemplateService.generateExecutableCode(
-                        request.getSourceCode(),
-                        request.getProblemId(),
-                        request.getLanguageId(),
-                        testCases
-                );
+            // 3. 🎯 FIXED: Generate LeetCode-style executable code directly
+            String executableCode = codeTemplateService.generateExecutableCode(
+                    request.getSourceCode(),
+                    request.getProblemId(),
+                    request.getLanguageId(),
+                    testCases
+            );
+            log.info("🔧 Generated executable code for LeetCode-style execution");
 
-                log.debug("Generated executable code for problem {}", request.getProblemId());
-
-                // Execute with Judge0
-                Judge0ExecutionResult judge0Result = executeWithJudge0(executableCode, request.getLanguageId());
-
-                // Parse test case results
-                List<TestCaseResult> testResults = parseTestResults(
-                        judge0Result.getStdout(),
-                        judge0Result.getStderr(),
-                        testCases
-                );
-
-                // Calculate statistics
-                int passedCount = (int) testResults.stream()
-                        .mapToLong(tr -> Boolean.TRUE.equals(tr.getPassed()) ? 1 : 0)
-                        .sum();
-
-                boolean allPassed = passedCount == testCases.size();
-                String status = determineStatus(judge0Result, allPassed);
-
-                // Save submission if needed
-                Submission submission = null;
-                if (Boolean.TRUE.equals(request.getIsSubmission())) {
-                    submission = saveSubmission(user, problem, language, request.getSourceCode(),
-                            status, judge0Result, testResults);
-                    updateProblemStatistics(problem, allPassed);
-                }
-
-                // Build response
-                return CodeExecutionResponse.builder()
-                        .success(judge0Result.isSuccess())
-                        .status(status)
-                        .message(allPassed ? "All test cases passed!" :
-                                passedCount + " out of " + testCases.size() + " test cases passed")
-                        .testCaseResults(testResults)
-                        .totalTestCases(testCases.size())
-                        .passedTestCases(passedCount)
-                        .allTestsPassed(allPassed)
-                        .executionTimeMs(judge0Result.getExecutionTimeMs())
-                        .memoryUsedKb(judge0Result.getMemoryUsedKb())
-                        .isSubmission(request.getIsSubmission())
-                        .submissionId(submission != null ? submission.getId() : null)
-                        .problemTitle(problem.getTitle())
-                        .acceptanceRate(problem.getAcceptanceRate())
-                        .stdout(!allPassed ? judge0Result.getStdout() : null)
-                        .stderr(!allPassed ? judge0Result.getStderr() : null)
-                        .compileOutput(!allPassed ? judge0Result.getCompileOutput() : null)
-                        .build();
-
-            } catch (Exception e) {
-                log.error("❌ Code execution failed", e);
-                return CodeExecutionResponse.builder()
-                        .success(false)
-                        .status("ERROR")
-                        .message("Execution failed: " + e.getMessage())
-                        .build();
-            }
-        });
-    }
-
-    /**
-     * 🔍 GET TEST CASES: Get appropriate test cases using YOUR existing repository methods
-     */
-    private List<TestCase> getTestCases(Problem problem, Boolean isSubmission) {
-        if (Boolean.TRUE.equals(isSubmission)) {
-            // For submissions: get ALL active test cases (both PUBLIC and HIDDEN)
-            return testCaseRepository.findByProblemAndIsActiveTrueOrderBySortOrder(problem);
-        } else {
-            // For runs: get only PUBLIC test cases (visible ones), limit to first 3
-            List<TestCase> publicTestCases = testCaseRepository
-                    .findByProblemAndTypeAndIsActiveTrueOrderBySortOrder(problem, TestCase.Type.PUBLIC);
-
-            // If no PUBLIC test cases exist, fall back to first 3 active test cases
-            if (publicTestCases.isEmpty()) {
-                List<TestCase> allTestCases = testCaseRepository
-                        .findByProblemAndIsActiveTrueOrderBySortOrder(problem);
-                return allTestCases.stream().limit(3).collect(Collectors.toList());
+            // 4. Create submission record if needed
+            Submission submission = null;
+            if (isSubmission) {
+                submission = createSubmissionRecord(user, problem, language, request.getSourceCode());
             }
 
-            // Return first 3 public test cases
-            return publicTestCases.stream().limit(3).collect(Collectors.toList());
+            // 5. Execute code against test cases
+            List<TestCaseResult> results = new ArrayList<>();
+            int passedCount = 0;
+            boolean allPassed = true;
+            String overallStatus = "ACCEPTED";
+            int totalRuntime = 0;
+            int maxMemory = 0;
+
+            for (int i = 0; i < testCases.size(); i++) {
+                TestCase testCase = testCases.get(i);
+                log.info("🧪 Executing test case {} of {}", i + 1, testCases.size());
+
+                try {
+                    // Execute single test case using executable code
+                    TestCaseResult result = executeSingleTestCase(executableCode, testCase, language, i + 1);
+                    results.add(result);
+
+                    if (result.getPassed()) {
+                        passedCount++;
+                    } else {
+                        allPassed = false;
+                        if ("ACCEPTED".equals(overallStatus)) {
+                            overallStatus = determineFailureStatus(result);
+                        }
+                    }
+
+                    // Aggregate performance metrics
+                    if (result.getRuntimeMs() != null) {
+                        totalRuntime += result.getRuntimeMs();
+                    }
+                    if (result.getMemoryKb() != null && result.getMemoryKb() > maxMemory) {
+                        maxMemory = result.getMemoryKb();
+                    }
+
+                    // For non-submissions, stop on first failure to save resources
+                    if (!isSubmission && !result.getPassed()) {
+                        log.info("🚫 Stopping execution on first failure (Run mode)");
+                        break;
+                    }
+
+                } catch (Exception e) {
+                    log.error("❌ Test case {} execution failed: {}", i + 1, e.getMessage());
+                    TestCaseResult errorResult = TestCaseResult.builder()
+                            .caseNumber(i + 1)
+                            .input(testCase.getInput())
+                            .expectedOutput(testCase.getExpectedOutput())
+                            .actualOutput("Runtime Error")
+                            .passed(false)
+                            .status("RUNTIME_ERROR")
+                            .errorMessage(e.getMessage())
+                            .visible(testCase.getType() == TestCase.Type.PUBLIC)
+                            .build();
+                    results.add(errorResult);
+                    allPassed = false;
+                    overallStatus = "RUNTIME_ERROR";
+                }
+            }
+
+            // 6. Update submission record
+            if (submission != null) {
+                updateSubmissionRecord(submission, results, overallStatus, totalRuntime, maxMemory);
+            }
+
+            // 7. Build response
+            CodeExecutionResponse response = buildExecutionResponse(
+                    problem, results, passedCount, testCases.size(), allPassed,
+                    overallStatus, totalRuntime, maxMemory, submission, isSubmission);
+
+            log.info("✅ Code execution completed - Status: {}, Passed: {}/{}",
+                    overallStatus, passedCount, testCases.size());
+
+            return CompletableFuture.completedFuture(response);
+
+        } catch (Exception e) {
+            log.error("💥 Code execution failed: {}", e.getMessage(), e);
+            return CompletableFuture.completedFuture(
+                    CodeExecutionResponse.builder()
+                            .success(false)
+                            .status("INTERNAL_ERROR")
+                            .message("Execution failed: " + e.getMessage())
+                            .allTestsPassed(false)
+                            .isSubmission(isSubmission)
+                            .build()
+            );
         }
     }
 
     /**
-     * ⚡ EXECUTE WITH JUDGE0: Core execution logic (FIXED TYPE HANDLING)
+     * 🔧 TEMPLATE-BASED EXECUTION - LeetCode style function completion (OPTIMIZED)
      */
-    private Judge0ExecutionResult executeWithJudge0(String sourceCode, Integer languageId) {
+    @Async("submissionExecutor")
+    public CompletableFuture<CodeExecutionResponse> executeWithTemplate(
+            CodeRunWithTemplateRequest request, String username, boolean isSubmission) {
+
         try {
-            // Create and submit Judge0 request
-            Judge0Service.Judge0SubmissionRequest request =
-                    Judge0Service.Judge0SubmissionRequest.builder()
-                            .source_code(sourceCode)
-                            .language_id(languageId)
-                            .stdin("")
-                            .build();
+            log.info("🔧 Starting template-based execution - Problem: {}, User: {}",
+                    request.getProblemId(), username);
 
-            // Submit to Judge0
-            Judge0Service.Judge0SubmissionResponse submitResponse = judge0Service.submitCode(request).block();
-            if (submitResponse == null || submitResponse.getToken() == null) {
-                throw new RuntimeException("Failed to submit code to Judge0");
+            // Convert to standard execution request directly
+            CodeRunRequest standardRequest = new CodeRunRequest();
+            standardRequest.setProblemId(request.getProblemId());
+            standardRequest.setLanguageId(request.getLanguageId());
+            standardRequest.setSourceCode(request.getUserCode()); // Use user code directly
+            standardRequest.setIsSubmission(isSubmission);
+
+            // Execute using standard flow (will auto-generate executable code)
+            return executeCode(standardRequest, username, isSubmission);
+
+        } catch (Exception e) {
+            log.error("💥 Template execution failed: {}", e.getMessage(), e);
+            return CompletableFuture.completedFuture(
+                    CodeExecutionResponse.builder()
+                            .success(false)
+                            .status("TEMPLATE_ERROR")
+                            .message("Template generation failed: " + e.getMessage())
+                            .allTestsPassed(false)
+                            .isSubmission(isSubmission)
+                            .build()
+            );
+        }
+    }
+
+    /**
+     * 📋 Get appropriate test cases based on execution type
+     */
+    private List<TestCase> getTestCases(Problem problem, boolean isSubmission) {
+        if (isSubmission) {
+            // Full submission: all test cases
+            return testCaseRepository.findByProblemAndIsActiveTrueOrderBySortOrder(problem);
+        } else {
+            // Run mode: only public (visible) test cases
+            return testCaseRepository.findByProblemAndTypeAndIsActiveTrueOrderBySortOrder(
+                    problem, TestCase.Type.PUBLIC);
+        }
+    }
+
+    /**
+     * 🧪 Execute single test case using Judge0 (COMPLETELY FIXED FOR ALL PROBLEMS)
+     */
+    private TestCaseResult executeSingleTestCase(String code, TestCase testCase,
+                                                 Language language, int caseNumber) {
+        try {
+            // Create Judge0 request - NO STDIN for LeetCode-style problems
+            Judge0Service.Judge0SubmissionRequest judge0Request = Judge0Service.Judge0SubmissionRequest.builder()
+                    .source_code(code)
+                    .language_id(language.getId())
+                    .stdin("") // Empty stdin for LeetCode-style problems
+                    .expected_output(testCase.getExpectedOutput().trim())
+                    .cpu_time_limit(2.0f)
+                    .memory_limit(256000) // 256MB in KB
+                    .build();
+
+            // Execute and get result
+            Judge0Service.Judge0SubmissionResponse judge0Response = judge0Service.submitCode(judge0Request)
+                    .block(); // Blocking call for synchronous execution
+
+            if (judge0Response == null) {
+                throw new RuntimeException("Judge0 returned null response");
             }
 
-            String token = submitResponse.getToken();
-            log.debug("Code submitted to Judge0 with token: {}", token);
+            // Parse results - look for test case results in stdout
+            String output = judge0Response.getStdout() != null ?
+                    judge0Response.getStdout().trim() : "";
 
-            // Poll for result
-            Judge0Service.Judge0ResultResponse result = pollForResult(token);
+            log.info("🎯 Judge0 stdout for case {}: '{}'", caseNumber, output);
 
-            // ✅ FIXED: Handle String time and Integer memory correctly
-            int executionTimeMs = 0;
-            if (result.getTime() != null && !result.getTime().trim().isEmpty()) {
-                try {
-                    double timeInSeconds = Double.parseDouble(result.getTime());
-                    executionTimeMs = (int) (timeInSeconds * 1000); // Convert seconds to ms
-                } catch (NumberFormatException e) {
-                    log.warn("Failed to parse execution time: {}", result.getTime());
-                    executionTimeMs = 0;
+            // Extract actual test case result from the test runner output
+            String testResult = extractTestCaseOutput(output, caseNumber);
+            String expectedOutput = testCase.getExpectedOutput().trim();
+
+            // 🔧 UNIVERSAL RESULT HANDLING - Works for ALL problem types
+            boolean passed = false;
+            String actualOutput = "";
+
+            if ("PASS".equals(testResult)) {
+                // Test runner reported success
+                passed = true;
+                actualOutput = expectedOutput; // Show expected value for passed tests
+                log.info("✅ Test case {} PASSED", caseNumber);
+            } else if ("FAIL".equals(testResult)) {
+                // Test runner reported failure
+                passed = false;
+                actualOutput = "Failed";
+                log.info("❌ Test case {} FAILED", caseNumber);
+            } else if ("Unable to determine result".equals(testResult) || testResult.isEmpty()) {
+                // Couldn't parse result - check if all tests in summary passed
+                if (output.contains("Results:") && output.contains("test cases passed")) {
+                    // Try to infer from overall results
+                    if (inferTestCasePassed(output, caseNumber)) {
+                        passed = true;
+                        actualOutput = expectedOutput;
+                        log.info("✅ Test case {} inferred as PASSED from summary", caseNumber);
+                    } else {
+                        passed = false;
+                        actualOutput = "Failed";
+                        log.info("❌ Test case {} inferred as FAILED from summary", caseNumber);
+                    }
+                } else {
+                    // Default to failed if we can't determine
+                    passed = false;
+                    actualOutput = "Unable to determine";
+                    log.warn("⚠️ Could not determine result for test case {}", caseNumber);
                 }
+            } else {
+                // Direct value comparison (for cases where actual value is returned)
+                passed = testResult.equals(expectedOutput);
+                actualOutput = testResult;
+                log.info("🔍 Direct comparison for case {}: Expected='{}', Actual='{}', Passed={}",
+                        caseNumber, expectedOutput, testResult, passed);
             }
 
-            int memoryUsedKb = 0;
-            if (result.getMemory() != null) {
-                memoryUsedKb = result.getMemory();
-            }
+            String status = determineTestCaseStatus(judge0Response, passed);
 
-            // Convert to our format
-            return Judge0ExecutionResult.builder()
-                    .success(result.getStatus() != null && result.getStatus().getId() == 3) // 3 = Accepted
-                    .statusId(result.getStatus() != null ? result.getStatus().getId() : -1)
-                    .stdout(result.getStdout())
-                    .stderr(result.getStderr())
-                    .compileOutput(result.getCompile_output())
-                    .executionTimeMs(executionTimeMs)
-                    .memoryUsedKb(memoryUsedKb)
+            return TestCaseResult.builder()
+                    .caseNumber(caseNumber)
+                    .input(testCase.getInput())
+                    .expectedOutput(expectedOutput)
+                    .actualOutput(actualOutput)
+                    .passed(passed)
+                    .status(status)
+                    .runtimeMs(judge0Response.getTime() != null ?
+                            Math.round(judge0Response.getTime() * 1000) : null)
+                    .memoryKb(judge0Response.getMemory())
+                    .visible(testCase.getType() == TestCase.Type.PUBLIC)
+                    .errorMessage(judge0Response.getStderr())
                     .build();
 
         } catch (Exception e) {
-            log.error("Judge0 execution failed", e);
-            return Judge0ExecutionResult.builder()
-                    .success(false)
-                    .statusId(-1)
-                    .stdout("")
-                    .stderr(e.getMessage())
-                    .compileOutput("")
-                    .executionTimeMs(0)
-                    .memoryUsedKb(0)
+            log.error("❌ Single test case execution failed: {}", e.getMessage());
+            return TestCaseResult.builder()
+                    .caseNumber(caseNumber)
+                    .input(testCase.getInput())
+                    .expectedOutput(testCase.getExpectedOutput())
+                    .actualOutput("Runtime Error: " + e.getMessage())
+                    .passed(false)
+                    .status("RUNTIME_ERROR")
+                    .errorMessage(e.getMessage())
+                    .visible(testCase.getType() == TestCase.Type.PUBLIC)
                     .build();
         }
     }
 
     /**
-     * ⏱️ POLL FOR RESULT: Wait for Judge0 result
+     * 🎯 UNIVERSAL OUTPUT EXTRACTION - Works for ALL languages and problem types
      */
-    private Judge0Service.Judge0ResultResponse pollForResult(String token) throws Exception {
-        int attempts = 0;
-        int maxAttempts = 20; // 40 seconds timeout
-
-        while (attempts < maxAttempts) {
-            Thread.sleep(2000); // Wait 2 seconds
-
-            Judge0Service.Judge0ResultResponse result = judge0Service.getSubmissionResult(token).block();
-            if (result != null && result.getStatus() != null) {
-                Integer statusId = result.getStatus().getId();
-                // Stop if not queued (1) or processing (2)
-                if (statusId != 1 && statusId != 2) {
-                    return result;
-                }
-            }
-            attempts++;
-        }
-
-        throw new RuntimeException("Execution timeout - Judge0 did not respond in time");
-    }
-
     /**
-     * 🔍 PARSE TEST RESULTS: Parse execution output to extract test results
+     * 🎯 ENHANCED OUTPUT EXTRACTION with Python Debug Support
      */
-    private List<TestCaseResult> parseTestResults(String stdout, String stderr, List<TestCase> testCases) {
-        List<TestCaseResult> results = new ArrayList<>();
-
-        if (stdout == null || stdout.trim().isEmpty()) {
-            // No output - create failed results
-            for (int i = 0; i < testCases.size(); i++) {
-                TestCase testCase = testCases.get(i);
-                results.add(TestCaseResult.builder()
-                        .caseNumber(i + 1)
-                        .input(testCase.getInput())
-                        .expectedOutput(testCase.getExpectedOutput())
-                        .actualOutput("No output")
-                        .passed(false)
-                        .status("FAILED")
-                        .runtimeMs(0)
-                        .errorMessage(stderr != null && !stderr.trim().isEmpty() ? stderr : "No output generated")
-                        .visible(testCase.getType() == null || testCase.getType() == TestCase.Type.PUBLIC)
-                        .build());
-            }
-            return results;
+    private String extractTestCaseOutput(String fullOutput, int caseNumber) {
+        if (fullOutput == null || fullOutput.isEmpty()) {
+            return "Unable to determine result";
         }
 
-        // Parse test results from stdout
-        Map<Integer, Boolean> testStatuses = extractTestStatuses(stdout);
-        Map<Integer, String> actualOutputs = extractActualOutputs(stdout);
-        Map<Integer, Integer> runtimes = extractRuntimes(stdout);
+        log.info("🔍 Extracting output for test case {} from: '{}'", caseNumber, fullOutput);
 
-        // Create results
-        for (int i = 0; i < testCases.size(); i++) {
-            TestCase testCase = testCases.get(i);
-            int caseNumber = i + 1;
-            boolean passed = testStatuses.getOrDefault(caseNumber, false);
+        String[] lines = fullOutput.split("\n");
 
-            results.add(TestCaseResult.builder()
-                    .caseNumber(caseNumber)
-                    .input(testCase.getInput())
-                    .expectedOutput(testCase.getExpectedOutput())
-                    .actualOutput(actualOutputs.getOrDefault(caseNumber, passed ? testCase.getExpectedOutput() : "Failed"))
-                    .passed(passed)
-                    .status(passed ? "PASSED" : "FAILED")
-                    .runtimeMs(runtimes.getOrDefault(caseNumber, 0))
-                    .errorMessage(passed ? null : "Test case failed")
-                    .visible(testCase.getType() == null || testCase.getType() == TestCase.Type.PUBLIC)
-                    .build());
-        }
-
-        return results;
-    }
-
-    /**
-     * 🔧 UTILITY METHODS
-     */
-    private Map<Integer, Boolean> extractTestStatuses(String stdout) {
-        Map<Integer, Boolean> statuses = new HashMap<>();
-        String[] lines = stdout.split("\n");
-
+        // NEW: Look for debug output first
         for (String line : lines) {
-            line = line.trim();
-            if (line.matches(".*Test Case \\d+: (PASS|FAIL)")) {
-                try {
-                    String[] parts = line.split(":");
-                    String testPart = parts[0];
-                    String statusPart = parts[1].trim();
+            String trimmedLine = line.trim();
 
-                    // Extract test case number
-                    String numberStr = testPart.replaceAll(".*Test Case (\\d+).*", "$1");
-                    int testNumber = Integer.parseInt(numberStr);
-                    boolean passed = "PASS".equals(statusPart);
+            if (trimmedLine.startsWith("[DEBUG] Test Case " + caseNumber + " - Result:")) {
+                String result = trimmedLine.substring(trimmedLine.indexOf("Result: ") + 8).trim();
+                log.info("🐛 Found debug result for case {}: '{}'", caseNumber, result);
+                return result;
+            }
+        }
 
-                    statuses.put(testNumber, passed);
-                } catch (Exception e) {
-                    log.debug("Failed to parse test status from line: {}", line);
+        // Look for explicit PASS/FAIL indicators
+        for (String line : lines) {
+            String trimmedLine = line.trim();
+
+            if (trimmedLine.contains("Test Case " + caseNumber + ": PASS")) {
+                log.info("✅ Found explicit PASS for test case {}", caseNumber);
+                return "PASS";
+            }
+            if (trimmedLine.contains("Test Case " + caseNumber + ": FAIL")) {
+                log.info("❌ Found explicit FAIL for test case {}", caseNumber);
+                return "FAIL";
+            }
+        }
+
+        // Look for Output: lines
+        boolean inTestCase = false;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i].trim();
+
+            if (line.contains("Test Case " + caseNumber)) {
+                inTestCase = true;
+                continue;
+            }
+
+            if (inTestCase) {
+                if (line.startsWith("Output: ")) {
+                    String output = line.substring("Output: ".length()).trim();
+                    log.info("✅ Found output for case {}: '{}'", caseNumber, output);
+                    return output;
+                }
+
+                if (line.startsWith("Actual: ")) {
+                    String actual = line.substring("Actual: ".length()).trim();
+                    log.info("✅ Found actual for case {}: '{}'", caseNumber, actual);
+                    return actual;
+                }
+
+                // Stop if we hit next test case
+                if (line.contains("Test Case " + (caseNumber + 1))) {
+                    break;
                 }
             }
         }
 
-        return statuses;
-    }
-
-    private Map<Integer, String> extractActualOutputs(String stdout) {
-        // Implementation to extract actual outputs if available
-        return new HashMap<>();
-    }
-
-    private Map<Integer, Integer> extractRuntimes(String stdout) {
-        // Implementation to extract individual test case runtimes if available
-        return new HashMap<>();
-    }
-
-    private String determineStatus(Judge0ExecutionResult result, boolean allPassed) {
-        if (!result.isSuccess()) {
-            return switch (result.getStatusId()) {
-                case 6 -> "COMPILATION_ERROR";
-                case 5 -> "TIME_LIMIT_EXCEEDED";
-                case 7, 8, 9, 10, 11, 12, 13 -> "RUNTIME_ERROR";
-                default -> "ERROR";
-            };
+        // Try to infer from summary
+        if (fullOutput.contains("Results:") && fullOutput.contains("test cases passed")) {
+            if (inferTestCasePassed(fullOutput, caseNumber)) {
+                return "PASS";
+            } else {
+                return "FAIL";
+            }
         }
-        return allPassed ? "ACCEPTED" : "WRONG_ANSWER";
+
+        log.warn("⚠️ Could not extract result for test case {}", caseNumber);
+        return "Unable to determine result";
     }
 
-    private Submission saveSubmission(User user, Problem problem, Language language,
-                                      String sourceCode, String status, Judge0ExecutionResult result,
-                                      List<TestCaseResult> testResults) {
 
+    /**
+     * 🎯 INFER TEST CASE RESULT from overall summary
+     */
+    private boolean inferTestCasePassed(String output, int caseNumber) {
+        try {
+            // Look for patterns like "Results: 2/2 test cases passed"
+            if (output.contains("Results:") && output.contains("test cases passed")) {
+                String[] lines = output.split("\n");
+                for (String line : lines) {
+                    if (line.contains("Results:") && line.contains("/") && line.contains("test cases passed")) {
+                        // Extract "2/2" part
+                        String resultPart = line.substring(line.indexOf("Results:") + 8);
+                        resultPart = resultPart.substring(0, resultPart.indexOf("test cases passed")).trim();
+
+                        if (resultPart.contains("/")) {
+                            String[] parts = resultPart.split("/");
+                            if (parts.length == 2) {
+                                int passed = Integer.parseInt(parts[0].trim());
+                                int total = Integer.parseInt(parts[1].trim());
+
+                                // If all tests passed and this test case is within range, assume passed
+                                if (passed == total && caseNumber <= total) {
+                                    log.info("✅ All {}/{} tests passed, inferring case {} as PASSED", passed, total, caseNumber);
+                                    return true;
+                                } else {
+                                    log.info("❌ Only {}/{} tests passed, inferring case {} as FAILED", passed, total, caseNumber);
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("⚠️ Could not parse summary results: {}", e.getMessage());
+        }
+
+        // Default to failed if we can't determine
+        return false;
+    }
+
+    /**
+     * 📊 Determine test case status based on Judge0 response
+     */
+    private String determineTestCaseStatus(Judge0Service.Judge0SubmissionResponse response, boolean passed) {
+        if (response.getStatus() == null) {
+            return "UNKNOWN";
+        }
+
+        switch (response.getStatus().getId()) {
+            case 3: // Accepted
+                return passed ? "ACCEPTED" : "WRONG_ANSWER";
+            case 4: // Wrong Answer
+                return "WRONG_ANSWER";
+            case 5: // Time Limit Exceeded
+                return "TIME_LIMIT_EXCEEDED";
+            case 6: // Compilation Error
+                return "COMPILATION_ERROR";
+            case 7: // Runtime Error (SIGSEGV)
+            case 8: // Runtime Error (SIGXFSZ)
+            case 9: // Runtime Error (SIGFPE)
+            case 10: // Runtime Error (SIGABRT)
+            case 11: // Runtime Error (NZEC)
+            case 12: // Runtime Error (Other)
+                return "RUNTIME_ERROR";
+            case 13: // Internal Error
+                return "INTERNAL_ERROR";
+            case 14: // Exec Format Error
+                return "RUNTIME_ERROR";
+            default:
+                return passed ? "ACCEPTED" : "WRONG_ANSWER";
+        }
+    }
+
+    /**
+     * 📝 Create submission record
+     */
+    private Submission createSubmissionRecord(User user, Problem problem, Language language, String sourceCode) {
         Submission submission = new Submission();
         submission.setUser(user);
         submission.setProblem(problem);
         submission.setLanguage(language);
         submission.setSourceCode(sourceCode);
-        submission.setStatus(Submission.Status.valueOf(status));
-        submission.setStdout(result.getStdout());
-        submission.setStderr(result.getStderr());
-        submission.setCompileOutput(result.getCompileOutput());
-        submission.setRuntimeMs(result.getExecutionTimeMs());
-        submission.setMemoryKb(result.getMemoryUsedKb());
+        submission.setStatus(Submission.Status.PENDING);
         submission.setCreatedAt(LocalDateTime.now());
-        submission.setUpdatedAt(LocalDateTime.now());
 
         return submissionRepository.save(submission);
     }
 
-    private void updateProblemStatistics(Problem problem, boolean accepted) {
-        problem.setTotalSubmissions(problem.getTotalSubmissions() + 1);
-        if (accepted) {
-            problem.setAcceptedSubmissions(problem.getAcceptedSubmissions() + 1);
-        }
+    /**
+     * 🔄 Update submission record with results
+     */
+    private void updateSubmissionRecord(Submission submission, List<TestCaseResult> results,
+                                        String status, int totalRuntime, int maxMemory) {
+        submission.setStatus(Submission.Status.valueOf(status));
+        submission.setRuntimeMs(totalRuntime);
+        submission.setMemoryKb(maxMemory);
+        submission.setTestCasesPassed(results.stream()
+                .mapToInt(r -> r.getPassed() ? 1 : 0).sum());
+        submission.setTestCasesTotal(results.size());
+        submission.setUpdatedAt(LocalDateTime.now());
 
-        double rate = problem.getTotalSubmissions() > 0 ?
-                (double) problem.getAcceptedSubmissions() / problem.getTotalSubmissions() * 100 : 0;
-        problem.setAcceptanceRate(rate);
-
-        problemRepository.save(problem);
+        submissionRepository.save(submission);
     }
 
-    public CodeExecutionResponse getSubmissionDetails(Long submissionId) {
-        Submission submission = submissionRepository.findById(submissionId)
-                .orElseThrow(() -> new RuntimeException("Submission not found"));
-
+    /**
+     * 🏗️ Build execution response
+     */
+    private CodeExecutionResponse buildExecutionResponse(Problem problem, List<TestCaseResult> results,
+                                                         int passedCount, int totalCount, boolean allPassed,
+                                                         String status, int totalRuntime, int maxMemory,
+                                                         Submission submission, boolean isSubmission) {
         return CodeExecutionResponse.builder()
-                .success(submission.getStatus() == Submission.Status.ACCEPTED)
-                .status(submission.getStatus().name())
-                .submissionId(submission.getId())
-                .executionTimeMs(submission.getRuntimeMs())
-                .memoryUsedKb(submission.getMemoryKb())
-                .problemTitle(submission.getProblem().getTitle())
+                .success(true)
+                .status(status)
+                .message(generateStatusMessage(status, passedCount, totalCount))
+                .testCaseResults(results)
+                .totalTestCases(totalCount)
+                .passedTestCases(passedCount)
+                .allTestsPassed(allPassed)
+                .executionTimeMs(totalRuntime)
+                .memoryUsedKb(maxMemory)
+                .submissionId(submission != null ? submission.getId() : null)
+                .isSubmission(isSubmission)
+                .problemTitle(problem.getTitle())
+                .acceptanceRate(calculateAcceptanceRate(problem))
                 .build();
     }
 
     /**
-     * 🏗️ HELPER CLASS: Judge0 execution result
+     * 📊 Calculate problem acceptance rate
      */
-    @lombok.Data
-    @lombok.Builder
-    private static class Judge0ExecutionResult {
-        private boolean success;
-        private int statusId;
-        private String stdout;
-        private String stderr;
-        private String compileOutput;
-        private int executionTimeMs;
-        private int memoryUsedKb;
+    private Double calculateAcceptanceRate(Problem problem) {
+        long totalSubmissions = submissionRepository.countByProblem(problem);
+        long acceptedSubmissions = submissionRepository.countByProblemAndStatus(
+                problem, Submission.Status.ACCEPTED);
+
+        return totalSubmissions > 0 ?
+                (double) acceptedSubmissions / totalSubmissions * 100 : 0.0;
+    }
+
+    /**
+     * 💬 Generate status message
+     */
+    private String generateStatusMessage(String status, int passed, int total) {
+        switch (status) {
+            case "ACCEPTED":
+                return String.format("✅ Accepted! All %d test cases passed.", total);
+            case "WRONG_ANSWER":
+                return String.format("❌ Wrong Answer. %d of %d test cases passed.", passed, total);
+            case "TIME_LIMIT_EXCEEDED":
+                return "⏰ Time Limit Exceeded. Your solution is too slow.";
+            case "COMPILATION_ERROR":
+                return "🔧 Compilation Error. Please check your syntax.";
+            case "RUNTIME_ERROR":
+                return "💥 Runtime Error. Your code crashed during execution.";
+            default:
+                return String.format("Status: %s. %d of %d test cases passed.", status, passed, total);
+        }
+    }
+
+    /**
+     * 🔍 Determine failure status from test case result
+     */
+    private String determineFailureStatus(TestCaseResult result) {
+        return result.getStatus() != null ? result.getStatus() : "WRONG_ANSWER";
     }
 }
